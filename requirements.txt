@@ -1,0 +1,13 @@
+# Database
+sqlalchemy==2.0.*
+PyMySQL==1.1.*
+
+# Scraping
+requests==2.32.*
+beautifulsoup4==4.12.*
+selenium==4.21.*
+webdriver-manager==4.0.*
+lxml==5.2.*
+
+# Utils
+python-dotenv==1.0.*
