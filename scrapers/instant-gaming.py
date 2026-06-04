@@ -56,9 +56,9 @@ def scrape_game_urls_by_page(driver: webdriver.Chrome, wait: WebDriverWait, page
         try:
             url = game.find_element(By.CSS_SELECTOR, ".item.force-badge a").get_attribute("href")
             print(f"  - {url}")
-            if (idx == 1):
-                return [{"url": url}]  # Test rapide : on ne scrape que le premier jeu de la page
-            # results.append({"url": url})
+            # if (idx == 1):
+                # return [{"url": url}]  # Test rapide : on ne scrape que le premier jeu de la page
+            results.append({"url": url})
         except Exception:
             continue
 
@@ -87,7 +87,6 @@ def scrape_all_pages(max_pages: int = 10) -> list[dict]:
     except Exception as e:
         print(f"Erreur lors du scraping : {e}")
 
-    # Récupération des détails pour chaque jeu
     print(f"\n[detail] Scraping de {len(games_urls)} pages produit...\n")
 
     full_games: list[dict] = []
@@ -137,4 +136,4 @@ if __name__ == "__main__":
         print(f"  Prix original : {g['original_price']}" if g['original_price'] else "  Prix original non disponible")
         print(f"  {g['url']}")
         print(f"  Image : {g['image_url']}")
-        print(f"  Platform : {g['platform']}")
+        print(f"  Platforme : {g['platform']}")

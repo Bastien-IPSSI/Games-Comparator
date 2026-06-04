@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import time
+import re
 
 BASE_URL = "https://fr.gamesplanet.com/search"
 PARAMS_BASE = {"av": "rel", "t": "game", "query": ""}
@@ -11,6 +12,28 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     )
 }
+
+def parse_price(raw: str) -> float | None:
+    if not raw:
+        return None
+    cleaned = raw.replace("\xa0", "").replace("\u00a0", "").strip()
+    # Format décimal : "46.99" ou "24,99"
+    match = re.search(r"\d+[.,]\d{2}", cleaned)
+    if match:
+        return float(match.group().replace(",", "."))
+    # Entier seul : "70"
+    match = re.search(r"\d+", cleaned)
+    if match:
+        return float(match.group())
+    return None
+
+
+def parse_discount(raw: str) -> int | None:
+    """Convertit '-33%' en 33."""
+    if not raw:
+        return None
+    match = re.search(r"\d+", raw)
+    return int(match.group()) if match else None
 
 def scrape_page(session: requests.Session, page: int) -> list[dict]:
     """Scrape une page et retourne une liste de jeux {title, price, url}."""
@@ -29,15 +52,25 @@ def scrape_page(session: requests.Session, page: int) -> list[dict]:
         try:
             title_el = item.select_one("h4 a")
             price_el = item.select_one(".price_current")
+            discount_el = item.select_one(".price_saving")
+            original_price_el = item.select_one(".price_base strike")
+            image_url_el = item.select_one("img")
 
             title = title_el.get_text(strip=True) if title_el else "N/A"
-            href  = title_el["href"] if title_el else ""
             price = price_el.get_text(strip=True) if price_el else "N/A"
+            discount = discount_el.get_text(strip=True) if discount_el else None
+            original_price = original_price_el.get_text(strip=True) if original_price_el else None
+            href  = title_el["href"] if title_el else ""
+            image_url = image_url_el["src"] if image_url_el else None
 
             results.append({
                 "title": title,
-                "price": price,
+                "price": parse_price(price),
+                "discount": parse_discount(discount),
+                "original_price": parse_price(original_price),
+                "platform": "Steam",
                 "url": f"https://fr.gamesplanet.com{href}" if href.startswith("/") else href,
+                "image_url": image_url
             })
         except Exception:
             continue
@@ -100,5 +133,11 @@ if __name__ == "__main__":
     print(f"\n{'='*50}")
     print(f"{len(games)} jeux récupérés au total\n")
     for g in games:
-        print(f"{g['title']} — {g['price']}")
+        print(f"-"*40)
+        print(f"{g['title']}")
+        print(f"  {g['price']}")
+        print(f"  {g['discount']}%" if g['discount'] else "  Pas de réduction")
+        print(f"  Prix original : {g['original_price']}" if g['original_price'] else "  Prix original non disponible")
         print(f"  {g['url']}")
+        print(f"  Image : {g['image_url']}\n")
+        print(f"  Plateforme : {g['platform']}")
