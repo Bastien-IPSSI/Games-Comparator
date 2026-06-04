@@ -83,6 +83,7 @@ Games-Comparator/
 +-- database/         # Modeles SQLAlchemy + CRUD (ecriture scrapers)
 +-- scrapers/         # Un scraper par site
 +-- api/              # API Express - lit la DB MySQL
++-- front/            # React - consomme l API
 +-- run_scrapers.py   # Lance tous les scrapers
 +-- .env              # Variables d environnement (non versionne)
 +-- .env.example      # Template a copier
@@ -96,3 +97,24 @@ Games-Comparator/
 | GET | `/api/games?q=...&platform=...` | Recherche de jeux avec meilleur prix |
 | GET | `/api/games/:id` | Detail d un jeu + prix par source |
 | GET | `/api/games/:id/history?source=...` | Historique des prix pour une source |
+
+## Front (interface)
+
+Le dossier `front/` contient l'application React qui consomme l'API Express située dans `api/`.
+
+Installation et lancement (depuis la racine du projet) :
+
+```bash
+cd front
+npm install
+npm run dev
+```
+
+Si l'application nécessite des variables d'environnement, créez un fichier `.env` dans `front/` ou adaptez la configuration selon `package.json`.
+
+Pour construire l'application pour la production :
+
+```bash
+cd front
+npm run build
+```
