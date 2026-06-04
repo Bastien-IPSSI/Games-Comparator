@@ -3,6 +3,9 @@
 venv/
 env/
 
+# Api
+api/node_modules/
+
 # Database
 db/*.db
 db/*.db-shm
