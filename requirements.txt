@@ -11,3 +11,5 @@ lxml==5.2.*
 
 # Utils
 python-dotenv==1.0.*
+rapidfuzz==3.*
+schedule==1.*

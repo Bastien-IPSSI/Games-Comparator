@@ -99,36 +99,35 @@ def get_total_pages(session: requests.Session) -> int:
 
 def scrape_all_pages(max_pages: int | None = None, delay: float = 0.5) -> list[dict]:
     """
-    Boucle sur toutes les pages (ou max_pages si défini).
+    Boucle jusqu'à obtenir une page vide (ou max_pages si défini).
     delay : pause en secondes entre chaque requête (évite le ban).
     """
     session = requests.Session()
-
-    total = get_total_pages(session)
-    limit = min(total, max_pages) if max_pages else total
-    print(f"Pages détectées : {total} — scraping des {limit} premières\n")
-
     all_games = []
+    page = 1
 
-    for page in range(1, limit + 1):
-        print(f"Scraping page {page}/{limit}...", end=" ")
+    while True:
+        if max_pages and page > max_pages:
+            print(f"  Limite de {max_pages} pages atteinte.")
+            break
+
+        print(f"Scraping page {page}...", end=" ")
         games = scrape_page(session, page)
 
         if not games:
-            print("vide")
+            print("vide — fin du catalogue")
             break
 
         all_games.extend(games)
         print(f"{len(games)} jeux (total : {len(all_games)})")
-
-        if page < limit:
-            time.sleep(delay)
+        page += 1
+        time.sleep(delay)
 
     return all_games
 
 
 if __name__ == "__main__":
-    games = scrape_all_pages(max_pages=5)
+    games = scrape_all_pages()
 
     print(f"\n{'='*50}")
     print(f"{len(games)} jeux récupérés au total\n")

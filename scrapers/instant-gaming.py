@@ -1,10 +1,12 @@
+import re
+import time
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import re
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 
 SOURCE = "instant-gaming"
 
@@ -19,98 +21,114 @@ BASE_URL = (
     "&page={page}"
 )
 
+HEADERS_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+
 def parse_price(raw: str) -> float | None:
     if not raw:
         return None
-    cleaned = raw.replace("\xa0", "").replace("\u00a0", "").strip()
-    # Format décimal : "46.99" ou "24,99"
+    cleaned = raw.replace("\xa0", "").replace(" ", "").strip()
     match = re.search(r"\d+[.,]\d{2}", cleaned)
     if match:
         return float(match.group().replace(",", "."))
-    # Entier seul : "70"
     match = re.search(r"\d+", cleaned)
-    if match:
-        return float(match.group())
-    return None
+    return float(match.group()) if match else None
 
 
 def parse_discount(raw: str) -> int | None:
-    """Convertit '-33%' en 33."""
     if not raw:
         return None
     match = re.search(r"\d+", raw)
     return int(match.group()) if match else None
 
-def scrape_game_urls_by_page(driver: webdriver.Chrome, wait: WebDriverWait, page: int) -> list[dict]:
-    driver.get(BASE_URL.format(page=page))
 
+def setup_driver(headless: bool = False) -> webdriver.Chrome:
+    service = ChromeService(ChromeDriverManager().install())
+    options = webdriver.ChromeOptions()
+    if headless:
+        options.add_argument("--headless=new")
+        options.add_argument("--window-size=1920,1080")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--log-level=3")
+    options.add_argument("--silent")
+    options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+    options.add_argument(f"user-agent={HEADERS_UA}")
+    driver = webdriver.Chrome(service=service, options=options)
+    if not headless:
+        driver.maximize_window()
+    else:
+        driver.set_window_size(1920, 1080)
+    return driver
+
+
+def scrape_game_urls_by_page(driver: webdriver.Chrome, wait: WebDriverWait, page: int) -> list[str]:
+    driver.get(BASE_URL.format(page=page))
     try:
         wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".listing-items .item")))
     except Exception:
         return []
 
-    games = driver.find_elements(By.CSS_SELECTOR, ".listing-items .item")
-    results = []
-
-    for idx, game in enumerate(games, 1):
+    urls = []
+    for game in driver.find_elements(By.CSS_SELECTOR, ".listing-items .item"):
         try:
             url = game.find_element(By.CSS_SELECTOR, ".item.force-badge a").get_attribute("href")
-            print(f"  - {url}")
-            # if (idx == 1):
-                # return [{"url": url}]  # Test rapide : on ne scrape que le premier jeu de la page
-            results.append({"url": url})
+            if url and "-steam-" in url:
+                urls.append(url)
         except Exception:
             continue
+    return urls
 
-    return results
 
-def scrape_all_pages(max_pages: int = 10) -> list[dict]:
-    """Boucle sur max_pages pages et agrège les résultats."""
-    service = ChromeService(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service)
-    driver.maximize_window()
-    wait = WebDriverWait(driver, 10)
-
-    games_urls: list[dict] = []
-
+def _safe_text(driver: webdriver.Chrome, selector: str, container_selector: str = ".panel-container") -> str | None:
+    """Re-query un élément à chaque appel pour éviter les références stale."""
     try:
-        for page in range(1, max_pages + 1):
-            print(f"Scraping page {page}...")
-            urls = scrape_game_urls_by_page(driver, wait, page)
+        return driver.find_element(By.CSS_SELECTOR, f"{container_selector} {selector}").text.strip() or None
+    except Exception:
+        return None
 
-            if not urls:
-                print(f"Page {page} vide — arrêt.")
-                break
 
-            games_urls.extend(urls)
-            print(f"{len(urls)} jeux récupérés (total : {len(games_urls)})\n")
-    except Exception as e:
-        print(f"Erreur lors du scraping : {e}")
+def _safe_texts(driver: webdriver.Chrome, selector: str) -> list[str]:
+    try:
+        return [el.text.strip() for el in driver.find_elements(By.CSS_SELECTOR, selector) if el.text.strip()]
+    except Exception:
+        return []
 
-    print(f"\n[detail] Scraping de {len(games_urls)} pages produit...\n")
 
-    full_games: list[dict] = []
+def _safe_attr(driver: webdriver.Chrome, selector: str, attr: str) -> str | None:
+    try:
+        return driver.find_element(By.CSS_SELECTOR, selector).get_attribute(attr) or None
+    except Exception:
+        return None
 
-    for idx, game in enumerate(games_urls, 1):
-        print(f"Scraping jeu {idx}/{len(games_urls)} : {game['url']}")
-        details = scrape_game_details(driver, wait, game["url"])
-        full_games.append(details)
 
-    driver.quit()
-    return full_games
-
-def scrape_game_details(driver: webdriver.Chrome, wait: WebDriverWait, url: str) -> dict:
+def scrape_game_details(driver: webdriver.Chrome, wait: WebDriverWait, url: str) -> dict | None:
     driver.get(url)
-
     try:
-        infos_container = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".panel-container")))
-        title = infos_container.find_element(By.CSS_SELECTOR, "h1").text.strip()
-        price_raw = infos_container.find_element(By.CSS_SELECTOR, ".total").text.strip()
-        discount_raw = infos_container.find_element(By.CSS_SELECTOR, ".discounted").text.strip() if infos_container.find_element(By.CSS_SELECTOR, ".discounted") else None
-        original_price_raw = infos_container.find_element(By.CSS_SELECTOR, ".retail").text.strip() if driver.find_element(By.CSS_SELECTOR, ".retail") else None
-        image_url = infos_container.find_element(By.CSS_SELECTOR, "img").get_attribute("src")
-        platform = infos_container.find_element(By.CSS_SELECTOR, ".platform-container span").text.strip() if infos_container.find_element(By.CSS_SELECTOR, ".platform-container span") else "N/A"
-        
+        # Attendre que la page soit prête et le contenu stabilisé
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".panel-container")))
+        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+        time.sleep(0.5)
+
+        # Re-query chaque élément depuis driver (jamais de référence stale)
+        title = _safe_text(driver, "h1")
+        if not title:
+            return None
+
+        price_raw      = _safe_text(driver, ".total")
+        discount_raw   = _safe_text(driver, ".discounted")
+        original_price_raw = _safe_text(driver, ".retail", container_selector="")
+
+        image_url = _safe_attr(driver, ".panel-container img", "src")
+
+        platform_texts = _safe_texts(driver, ".platform-container span")
+        platform = platform_texts[0] if platform_texts else "Steam"
+
         return {
             "title": title,
             "price": parse_price(price_raw),
@@ -118,22 +136,57 @@ def scrape_game_details(driver: webdriver.Chrome, wait: WebDriverWait, url: str)
             "original_price": parse_price(original_price_raw),
             "platform": platform,
             "url": url,
-            "image_url": image_url
+            "image_url": image_url,
         }
-    except Exception:
-        print(f"Erreur lors du scraping des détails : {url}")
+    except Exception as e:
+        print(f"  [!] Erreur détails {url} : {e}")
+        return None
+
+
+def scrape_all_pages(max_pages: int = 10, headless: bool = False) -> list[dict]:
+    driver = setup_driver(headless=headless)
+    wait = WebDriverWait(driver, 15)
+    all_games: list[dict] = []
+
+    try:
+        # Étape 1 : collecter toutes les URLs
+        all_urls: list[str] = []
+        for page in range(1, max_pages + 1):
+            print(f"  Page {page}/{max_pages} — collecte des URLs...")
+            urls = scrape_game_urls_by_page(driver, wait, page)
+            if not urls:
+                print(f"  Page {page} vide — arrêt.")
+                break
+            all_urls.extend(urls)
+            print(f"  {len(urls)} URLs (total : {len(all_urls)})")
+            time.sleep(0.5)
+
+        # Étape 2 : scraper les détails de chaque jeu
+        print(f"\n  Scraping des détails pour {len(all_urls)} jeux...")
+        for idx, url in enumerate(all_urls, 1):
+            print(f"  [{idx}/{len(all_urls)}] {url}")
+            details = scrape_game_details(driver, wait, url)
+            if details:
+                all_games.append(details)
+            time.sleep(0.3)
+
+    finally:
+        driver.quit()
+
+    return all_games
+
 
 if __name__ == "__main__":
-    games = scrape_all_pages(max_pages=1)
+    import json
+    games = scrape_all_pages(max_pages=1, headless=False)
 
     print(f"\n{'='*40}")
     print(f"{len(games)} jeux au total\n")
     for g in games:
-        print(f"-"*40)
+        print("-" * 40)
         print(f"{g['title']}")
-        print(f"  {g['price']}")
-        print(f"  {g['discount']}% de réduction" if g['discount'] else "  Pas de réduction")
-        print(f"  Prix original : {g['original_price']}" if g['original_price'] else "  Prix original non disponible")
-        print(f"  {g['url']}")
-        print(f"  Image : {g['image_url']}")
-        print(f"  Platforme : {g['platform']}")
+        print(f"  Prix : {g['price']} €")
+        print(f"  Remise : {g['discount']}%" if g['discount'] else "  Pas de réduction")
+        print(f"  Prix original : {g['original_price']}" if g['original_price'] else "")
+        print(f"  URL : {g['url']}")
+        print(f"  Plateforme : {g['platform']}")
