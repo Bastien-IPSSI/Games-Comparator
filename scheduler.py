@@ -12,7 +12,6 @@ import logging
 import re
 import sys
 import time
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 

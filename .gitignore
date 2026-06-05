@@ -6,6 +6,9 @@ env/
 # Api
 api/node_modules/
 
+# Front
+front/node_modules/
+
 # Database
 db/*.db
 db/*.db-shm
