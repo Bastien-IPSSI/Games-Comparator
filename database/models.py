@@ -11,7 +11,12 @@ load_dotenv()
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
-engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    connect_args={"charset": "utf8mb4"},
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -32,6 +37,7 @@ class Game(Base):
 
     __table_args__ = (
         UniqueConstraint("normalized_title", "platform", name="uq_game_title_platform"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
     )
 
     prices = relationship("Price", back_populates="game", cascade="all, delete-orphan")

@@ -1,13 +1,3 @@
-"""
-Orchestrateur de scraping — s'exécute toutes les heures.
-
-Logique :
-  1. Lance les 3 scrapers en séquence.
-  2. Fait matcher les noms entre sites (fuzzy matching, seuil 90 %).
-  3. N'enregistre un jeu que s'il est présent sur au moins 2 sites.
-  4. Utilise le module `database` existant (MySQL / SQLAlchemy).
-"""
-import importlib.util
 import logging
 import re
 import sys
@@ -18,18 +8,17 @@ from pathlib import Path
 import schedule
 from rapidfuzz import fuzz
 
-# ── Chemins ──────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent
-sys.path.insert(0, str(ROOT))          # permet d'importer `database`
+sys.path.insert(0, str(ROOT))
 
 from database.models import init_db, SessionLocal
 from database.crud import get_or_create_game, add_price, normalize as crud_normalize
+from scrapers.gameplanet import scrape_all_pages as scrape_gamesplanet
+from scrapers.instant_gaming import scrape_all_pages as scrape_instant_gaming
+from scrapers.fanatical import scrape_all as scrape_fanatical
 
-SCRIPTS_DIR = ROOT / "scrapers"
-
-# ── Paramètres ────────────────────────────────────────────────────────────────
-CONFIDENCE = 70    # score minimum (0-100) pour considérer deux titres identiques
-MIN_SITES  = 2     # un jeu doit apparaître sur au moins N sites pour être sauvegardé
+CONFIDENCE = 70
+MIN_SITES  = 2
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,33 +27,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Import dynamique (gère les noms de fichiers avec tiret) ──────────────────
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod  = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
-# ── Normalisation étendue pour le matching cross-sites ───────────────────────
-_EDITION_RE = re.compile(
-    r"\b(deluxe|standard|gold|premium|ultimate|complete|goty|"
-    r"game\s+of\s+the\s+year|remastered|definitive|enhanced|"
-    r"anniversary|collectors?|bundle|edition|pack|dlc|remake)\b",
-    re.IGNORECASE,
-)
-_ARTICLE_RE = re.compile(r"^(the|a|an|le|la|les|un|une|des)\s+")
-
-def normalize_for_match(title: str) -> str:
-    """Normalisation plus agressive que crud.normalize() : supprime aussi
-    les suffixes d'édition et les articles, pour maximiser les matchs cross-sites."""
-    t = crud_normalize(title)           # lowercase, accents, ponctuation
-    t = _ARTICLE_RE.sub("", t)
-    t = _EDITION_RE.sub("", t)
-    return " ".join(t.split())
-
-# ── Matching cross-sites ──────────────────────────────────────────────────────
 def _similarity(a: str, b: str) -> int:
     return max(fuzz.ratio(a, b), fuzz.token_sort_ratio(a, b))
+
 
 def match_across_sites(games_by_site: dict[str, list[dict]]) -> list[dict]:
     """
@@ -80,7 +46,7 @@ def match_across_sites(games_by_site: dict[str, list[dict]]) -> list[dict]:
 
     sites  = list(games_by_site.keys())
     normed = {
-        site: [(normalize_for_match(g["title"]), g) for g in games]
+        site: [(crud_normalize(g["title"]), g) for g in games]
         for site, games in games_by_site.items()
     }
     used   = {site: set() for site in sites}
@@ -119,7 +85,7 @@ def match_across_sites(games_by_site: dict[str, list[dict]]) -> list[dict]:
 
     return groups
 
-# ── Conversion de prix ────────────────────────────────────────────────────────
+
 def _to_float(val) -> float | None:
     if val is None:
         return None
@@ -131,27 +97,18 @@ def _to_float(val) -> float | None:
     except ValueError:
         return None
 
-# ── Scrapers disponibles ──────────────────────────────────────────────────────
-# Format : (site_name, filename, function_name, kwargs)
-# Note : instant-gaming.py ouvre un Chrome visible (pas de mode headless natif).
-SCRAPERS = [
-    ("gamesplanet",    "gameplanet.py",     "scrape_all_pages", {}),
-    ("instant_gaming", "instant-gaming.py", "scrape_all_pages", {"max_pages": 2, "headless": True}),
-    ("fanatical",      "fanatical.py",      "scrape_all",       {}),
-]
 
-def run_scraper(site: str, filename: str, func: str, kwargs: dict) -> list[dict]:
+def run_scraper(site: str, fn, **kwargs) -> list[dict]:
     log.info("[%s] Démarrage du scraping…", site)
     try:
-        mod    = _load_module(site, SCRIPTS_DIR / filename)
-        games  = getattr(mod, func)(**kwargs)
+        games = fn(**kwargs)
         log.info("[%s] %d jeux trouvés", site, len(games))
         return games
     except Exception as exc:
         log.error("[%s] Erreur : %s", site, exc)
         return []
 
-# ── Sauvegarde en base ────────────────────────────────────────────────────────
+
 def save_groups(groups: list[dict]) -> int:
     session = SessionLocal()
     saved   = 0
@@ -159,18 +116,19 @@ def save_groups(groups: list[dict]) -> int:
         for group in groups:
             canonical = group["canonical"]
             title     = canonical.get("title", "")
-            platform  = canonical.get("platform", "PC")
-            image_url = canonical.get("image_url") or None
-
             if not title:
                 continue
 
-            game = get_or_create_game(session, title, platform, image_url)
+            game = get_or_create_game(
+                session, title,
+                canonical.get("platform", "PC"),
+                canonical.get("image_url") or None,
+            )
 
             for site, g in group["sites"].items():
                 price = _to_float(g.get("price"))
                 if price is None:
-                    continue     # prix inconnu → on ne crée pas de ligne Price
+                    continue
                 add_price(
                     session,
                     game_id        = game.id,
@@ -192,16 +150,17 @@ def save_groups(groups: list[dict]) -> int:
 
     return saved
 
-# ── Job principal ─────────────────────────────────────────────────────────────
+
 def run_job():
     log.info("=" * 60)
     log.info("Lancement du job — %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     log.info("=" * 60)
 
-    # 1. Scraper
-    games_by_site: dict[str, list[dict]] = {}
-    for site, filename, func, kwargs in SCRAPERS:
-        games_by_site[site] = run_scraper(site, filename, func, kwargs)
+    games_by_site = {
+        "gamesplanet":    run_scraper("gamesplanet",    scrape_gamesplanet, max_pages=200),
+        "instant_gaming": run_scraper("instant_gaming", scrape_instant_gaming, max_pages=2, headless=True),
+        "fanatical":      run_scraper("fanatical",      scrape_fanatical),
+    }
 
     sites_with_data = {s: v for s, v in games_by_site.items() if v}
     if len(sites_with_data) < MIN_SITES:
@@ -211,21 +170,18 @@ def run_job():
     total = sum(len(v) for v in sites_with_data.values())
     log.info("Total scrapé : %d jeux sur %d sites", total, len(sites_with_data))
 
-    # 2. Matcher
     log.info("Matching des titres (seuil %d%%)…", CONFIDENCE)
     groups = match_across_sites(sites_with_data)
     log.info("%d jeux présents sur %d+ sites", len(groups), MIN_SITES)
 
-    # 3. Enregistrer
     saved = save_groups(groups)
     log.info("Enregistrés / mis à jour en base : %d", saved)
     log.info("Job terminé.\n")
 
-# ── Point d'entrée ────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    init_db()   # crée les tables si elles n'existent pas encore
 
-    run_job()   # exécution immédiate au démarrage
+if __name__ == "__main__":
+    init_db()
+    run_job()
 
     schedule.every(1).hours.do(run_job)
     log.info("Scheduler actif — prochain run dans 1 heure (Ctrl+C pour arrêter)")

@@ -36,7 +36,7 @@ router.get("/", async (req, res) => {
       params.push(platform);
     }
 
-    sql += " GROUP BY g.id ORDER BY best_price ASC";
+    sql += " GROUP BY g.id";
 
     const [rows] = await pool.query(sql, params);
     res.json(rows);

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 
 export default function GameCard({ game }) {
-    const { id, title, image_url, best_price, best_source, discount_pct } =
+    const { id, title, image_url, best_price, discount_pct } =
         game;
 
     return (
@@ -48,11 +48,6 @@ export default function GameCard({ game }) {
                             ? `${Number(best_price).toFixed(2)} €`
                             : "—"}
                     </span>
-                    {best_source && (
-                        <span className="text-[10px] uppercase tracking-widest truncate text-tx-muted transition-colors duration-300 group-hover:text-tx">
-                            {best_source}
-                        </span>
-                    )}
                 </div>
             </div>
         </Link>
